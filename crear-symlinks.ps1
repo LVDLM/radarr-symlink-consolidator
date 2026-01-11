@@ -25,16 +25,12 @@ $destino = "F:\Animación"
 $origenes = @(
     "I:\",
     "N:\",
-    "Q:\",
-    "O:\",
-    "P:\",
     "R:\#Sagas",
     "S:\Filmografias",
-    "T:\",
     "U:\"
 )
 
-# Extensiones de video validas
+# Extensiones de video validas (agrega las que necesites)
 $extensiones = @("*.mkv", "*.mp4", "*.avi", "*.m4v", "*.mov")
 
 # Nombres de carpetas a ignorar (puedes agregar más)
@@ -240,4 +236,5 @@ Write-Host "Los archivos originales NO se han movido ni copiado." -ForegroundCol
 Write-Host ""
 
 # Pausar para ver resultados
+
 Read-Host "Presiona Enter para salir"
