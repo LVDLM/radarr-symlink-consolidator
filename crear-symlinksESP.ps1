@@ -1,44 +1,45 @@
-# Script para crear symlinks de peliculas dispersas en varios discos
+# Script para crear symlinks de carpetas de películas dispersas en varios discos
+# Esta versión crea symlinks a carpetas completas (mejor para Radarr)
 # EJECUTAR COMO ADMINISTRADOR
 
-# Verificar si se esta ejecutando como administrador
-$esAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+# Verificar si se está ejecutando como administrador
+$isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
-if (-not $esAdmin) {
+if (-not $isAdmin) {
     Write-Host ""
     Write-Host "ERROR: Este script necesita ejecutarse como ADMINISTRADOR" -ForegroundColor Red
     Write-Host ""
-    Write-Host "Como ejecutar:" -ForegroundColor Yellow
+    Write-Host "Cómo ejecutar:" -ForegroundColor Yellow
     Write-Host "1. Click derecho en PowerShell" -ForegroundColor White
     Write-Host "2. Seleccionar 'Ejecutar como administrador'" -ForegroundColor White
     Write-Host "3. Navegar a la carpeta del script: cd 'ruta\del\script'" -ForegroundColor White
-    Write-Host "4. Ejecutar: .\crear-symlinks.ps1" -ForegroundColor White
+    Write-Host "4. Ejecutar: .\create-folder-symlinks.ps1" -ForegroundColor White
     Write-Host ""
     Read-Host "Presiona Enter para salir"
     exit
 }
 
-# Configuracion
-$destino = "F:\AnimaciÃ³n"
+# Configuración (carpeta de destino de los enlaces)
+$destination = "F:\Cine"
 
-# Lista de rutas origen (agrega todas tus carpetas con peliculas)
-$origenes = @(
+# Lista de rutas origen (agrega todas tus carpetas con películas)
+$sources = @(
     "I:\",
     "N:\",
     "Q:\",
     "O:\",
     "P:\",
     "R:\#Sagas",
-    "S:\Filmografias",
+    "S:\Filmographies",
     "T:\",
     "U:\"
 )
 
-# Extensiones de video validas
-$extensiones = @("*.mkv", "*.mp4", "*.avi", "*.m4v", "*.mov")
+# Extensiones de video válidas (para identificar carpetas con películas)
+$extensions = @("*.mkv", "*.mp4", "*.avi", "*.m4v", "*.mov")
 
-# Nombres de carpetas a ignorar (puedes agregar mÃ¡s)
-$carpetasIgnoradas = @(
+# Nombres de carpetas a ignorar (puedes agregar más)
+$ignoredFolders = @(
     "extra",
     "extras",
     "featurettes",
@@ -52,191 +53,156 @@ $carpetasIgnoradas = @(
     "samples"
 )
 
-# Palabras en nombres de archivo a ignorar
-$palabrasIgnoradasEnArchivo = @(
-    "sample"
-)
+# Modo debug (cambiar a $true para ver más detalles)
+$debugMode = $false
 
-# Modo debug (cambiar a $true para ver mÃ¡s detalles)
-$modoDebug = $false
-
-# FunciÃ³n para verificar si una ruta debe ser ignorada
-function DebeIgnorar {
+# Función para verificar si una carpeta debe ser ignorada
+function ShouldIgnoreFolder {
     param (
-        [string]$rutaArchivo,
-        [string]$nombreArchivo
+        [string]$folderPath,
+        [string]$folderName
     )
     
     try {
-        # Verificar si el nombre del archivo contiene palabras a ignorar
-        foreach ($palabra in $palabrasIgnoradasEnArchivo) {
-            if ($nombreArchivo.ToLower() -like "*$palabra*") {
-                return $true
-            }
+        # Verificar si el nombre de la carpeta está en la lista de ignorados
+        if ($ignoredFolders -contains $folderName.ToLower()) {
+            return $true
         }
         
-        # Obtener todas las carpetas en la ruta
-        $carpetas = $rutaArchivo.Split([IO.Path]::DirectorySeparatorChar)
-        
-        # Verificar si alguna carpeta en la ruta coincide con las ignoradas
-        foreach ($carpeta in $carpetas) {
-            if ($carpetasIgnoradas -contains $carpeta.ToLower()) {
-                return $true
-            }
-        }
-        
-        # Verificar si existe archivo .ignore en la carpeta del archivo o en carpetas superiores
-        $directorioActual = Split-Path -LiteralPath $rutaArchivo -Parent
-        
-        while ($directorioActual) {
-            $archivoIgnore = Join-Path $directorioActual ".ignore"
-            if (Test-Path -LiteralPath $archivoIgnore -ErrorAction SilentlyContinue) {
-                return $true
-            }
-            
-            # Subir un nivel (detener si llegamos a la raÃ­z)
-            $directorioPadre = Split-Path -LiteralPath $directorioActual -Parent
-            if ($directorioPadre -eq $directorioActual) {
-                break
-            }
-            $directorioActual = $directorioPadre
+        # Verificar si existe archivo .ignore en la carpeta
+        $ignoreFile = Join-Path $folderPath ".ignore"
+        if (Test-Path -LiteralPath $ignoreFile -ErrorAction SilentlyContinue) {
+            return $true
         }
         
         return $false
     } catch {
-        # Si hay error al verificar, no ignorar el archivo
+        return $false
+    }
+}
+
+# Función para verificar si una carpeta contiene archivos de video
+function ContainsVideoFiles {
+    param (
+        [string]$folderPath
+    )
+    
+    try {
+        foreach ($ext in $extensions) {
+            $videoFiles = Get-ChildItem -LiteralPath $folderPath -Filter $ext -File -ErrorAction SilentlyContinue
+            if ($videoFiles) {
+                return $true
+            }
+        }
+        return $false
+    } catch {
+        # Si hay error al verificar, asumir que no contiene videos
         return $false
     }
 }
 
 # Crear carpeta destino si no existe
-if (-not (Test-Path -LiteralPath $destino)) {
-    New-Item -ItemType Directory -Path $destino -Force | Out-Null
-    Write-Host "Carpeta destino creada: $destino" -ForegroundColor Green
+if (-not (Test-Path -LiteralPath $destination)) {
+    New-Item -ItemType Directory -Path $destination -Force | Out-Null
+    Write-Host "Carpeta destino creada: $destination" -ForegroundColor Green
 }
 
 Write-Host ""
-Write-Host "=== INICIANDO CREACION DE SYMLINKS ===" -ForegroundColor Cyan
-Write-Host "Destino: $destino" -ForegroundColor Yellow
+Write-Host "=== INICIANDO CREACIÓN DE SYMLINKS DE CARPETAS ===" -ForegroundColor Cyan
+Write-Host "Destino: $destination" -ForegroundColor Yellow
 Write-Host ""
 
-$contador = 0
-$errores = 0
-$ignorados = 0
-$yaExisten = 0
+$counter = 0
+$errors = 0
+$ignored = 0
+$alreadyExist = 0
 
-foreach ($origen in $origenes) {
-    if (-not (Test-Path -LiteralPath $origen)) {
-        Write-Host "Ruta no encontrada: $origen" -ForegroundColor Yellow
+foreach ($source in $sources) {
+    if (-not (Test-Path -LiteralPath $source)) {
+        Write-Host "Ruta no encontrada: $source" -ForegroundColor Yellow
         continue
     }
     
     Write-Host ""
-    Write-Host "Procesando: $origen" -ForegroundColor Cyan
+    Write-Host "Procesando: $source" -ForegroundColor Cyan
     
-    # Buscar todos los archivos de video recursivamente
-    foreach ($ext in $extensiones) {
-        $archivos = Get-ChildItem -Path $origen -Filter $ext -Recurse -File -ErrorAction SilentlyContinue
-        
-        foreach ($archivo in $archivos) {
-            try {
-                # DEBUG: Mostrar informaciÃ³n del archivo
-                if ($modoDebug) {
-                    Write-Host ""
-                    Write-Host "DEBUG - Procesando archivo:" -ForegroundColor Magenta
-                    Write-Host "  Nombre: $($archivo.Name)" -ForegroundColor DarkGray
-                    Write-Host "  FullName: $($archivo.FullName)" -ForegroundColor DarkGray
-                    Write-Host "  Directory: $($archivo.DirectoryName)" -ForegroundColor DarkGray
-                }
-                
-                # Verificar que el archivo aÃºn existe
-                if (-not (Test-Path -LiteralPath $archivo.FullName)) {
-                    Write-Host "  Archivo desaparecido: $($archivo.Name)" -ForegroundColor Magenta
-                    Write-Host "    Ruta reportada: $($archivo.FullName)" -ForegroundColor DarkGray
-                    $ignorados++
-                    continue
-                }
-            } catch {
-                Write-Host "  Error al verificar existencia: $($archivo.Name)" -ForegroundColor Magenta
-                Write-Host "    $($_.Exception.Message)" -ForegroundColor DarkGray
-                $ignorados++
+    # Obtener todas las carpetas que contienen archivos de video
+    $folders = Get-ChildItem -Path $source -Directory -Recurse -ErrorAction SilentlyContinue | Where-Object {
+        ContainsVideoFiles -folderPath $_.FullName
+    }
+    
+    foreach ($folder in $folders) {
+        try {
+            # DEBUG: Mostrar información de la carpeta
+            if ($debugMode) {
+                Write-Host ""
+                Write-Host "DEBUG - Procesando carpeta:" -ForegroundColor Magenta
+                Write-Host "  Nombre: $($folder.Name)" -ForegroundColor DarkGray
+                Write-Host "  FullName: $($folder.FullName)" -ForegroundColor DarkGray
+            }
+            
+            # Verificar si la carpeta debe ser ignorada
+            if (ShouldIgnoreFolder -folderPath $folder.FullName -folderName $folder.Name) {
+                Write-Host "  Ignorado: $($folder.Name)" -ForegroundColor DarkYellow
+                $ignored++
                 continue
             }
             
-            # Verificar si debe ignorarse
-            if (DebeIgnorar -rutaArchivo $archivo.FullName -nombreArchivo $archivo.Name) {
-                Write-Host "  Ignorado: $($archivo.Name)" -ForegroundColor DarkYellow
-                $ignorados++
+            # Ruta del symlink de destino
+            $symlinkPath = Join-Path $destination $folder.Name
+            
+            # Verificar si ya existe
+            if (Test-Path -LiteralPath $symlinkPath) {
+                if ($debugMode) {
+                    Write-Host "  Ya existe: $($folder.Name)" -ForegroundColor Gray
+                }
+                $alreadyExist++
                 continue
             }
             
-            try {
-                # Obtener nombre del archivo sin extension
-                $nombrePelicula = $archivo.BaseName
-                
-                # Crear carpeta de destino para la pelicula
-                $carpetaPelicula = Join-Path $destino $nombrePelicula
-                
-                if (-not (Test-Path -LiteralPath $carpetaPelicula)) {
-                    New-Item -ItemType Directory -Path $carpetaPelicula -Force -ErrorAction Stop | Out-Null
-                }
-                
-                # Ruta completa del symlink
-                $symlinkPath = Join-Path $carpetaPelicula $archivo.Name
-                
-                # Verificar si ya existe
-                if (Test-Path -LiteralPath $symlinkPath) {
-                    if ($modoDebug) {
-                        Write-Host "  Ya existe: $nombrePelicula" -ForegroundColor Gray
-                    }
-                    $yaExisten++
-                    continue
-                }
-                
-                # DEBUG: Mostrar lo que se va a crear
-                if ($modoDebug) {
-                    Write-Host "  Intentando crear symlink:" -ForegroundColor Cyan
-                    Write-Host "    Target: $($archivo.FullName)" -ForegroundColor DarkGray
-                    Write-Host "    Path: $symlinkPath" -ForegroundColor DarkGray
-                }
-                
-                # Escapar corchetes en la ruta de origen (fix para bug de PowerShell)
-                $targetEscapado = $archivo.FullName -replace '\[','`[' -replace '\]','`]'
-                
-                # Crear el symlink usando -Value en lugar de -Target (mejor manejo de corchetes)
-                New-Item -ItemType SymbolicLink -Path $symlinkPath -Value $targetEscapado -Force -ErrorAction Stop | Out-Null
-                
-                Write-Host "  Creado: $nombrePelicula" -ForegroundColor Green
-                
-                $contador++
-                
-            } catch {
-                Write-Host "  Error con: $($archivo.Name)" -ForegroundColor Red
-                Write-Host "    Ruta origen: $($archivo.FullName)" -ForegroundColor DarkRed
-                Write-Host "    Carpeta destino: $carpetaPelicula" -ForegroundColor DarkRed
-                Write-Host "    Mensaje: $($_.Exception.Message)" -ForegroundColor DarkRed
-                $errores++
+            # DEBUG: Mostrar lo que se va a crear
+            if ($debugMode) {
+                Write-Host "  Intentando crear symlink de carpeta:" -ForegroundColor Cyan
+                Write-Host "    Target: $($folder.FullName)" -ForegroundColor DarkGray
+                Write-Host "    Path: $symlinkPath" -ForegroundColor DarkGray
             }
+            
+            # Escapar corchetes en la ruta de origen (fix para bug de PowerShell)
+            $escapedTarget = $folder.FullName -replace '\[','`[' -replace '\]','`]'
+            
+            # Crear el symlink de directorio
+            New-Item -ItemType SymbolicLink -Path $symlinkPath -Value $escapedTarget -Force -ErrorAction Stop | Out-Null
+            
+            Write-Host "  Creado: $($folder.Name)" -ForegroundColor Green
+            
+            $counter++
+            
+        } catch {
+            Write-Host "  Error con: $($folder.Name)" -ForegroundColor Red
+            Write-Host "    Ruta origen: $($folder.FullName)" -ForegroundColor DarkRed
+            Write-Host "    Ruta destino: $symlinkPath" -ForegroundColor DarkRed
+            Write-Host "    Mensaje: $($_.Exception.Message)" -ForegroundColor DarkRed
+            $errors++
         }
     }
 }
 
 Write-Host ""
 Write-Host "=== RESUMEN ===" -ForegroundColor Cyan
-Write-Host "Symlinks creados: $contador" -ForegroundColor Green
-Write-Host "Ya existÃ­an: $yaExisten" -ForegroundColor Gray
-Write-Host "Archivos ignorados: $ignorados" -ForegroundColor Yellow
-if ($errores -gt 0) {
-    Write-Host "Errores: $errores" -ForegroundColor Red
+Write-Host "Symlinks de carpetas creados: $counter" -ForegroundColor Green
+Write-Host "Ya existían: $alreadyExist" -ForegroundColor Gray
+Write-Host "Carpetas ignoradas: $ignored" -ForegroundColor Yellow
+if ($errors -gt 0) {
+    Write-Host "Errores: $errors" -ForegroundColor Red
     Write-Host ""
-    Write-Host "SUGERENCIA: Cambia `$modoDebug = `$true al inicio del script" -ForegroundColor Yellow
-    Write-Host "para ver informaciÃ³n detallada sobre los errores." -ForegroundColor Yellow
+    Write-Host "SUGERENCIA: Cambia `$debugMode = `$true al inicio del script" -ForegroundColor Yellow
+    Write-Host "para ver información detallada sobre los errores." -ForegroundColor Yellow
 } else {
-    Write-Host "Errores: $errores" -ForegroundColor Green
+    Write-Host "Errores: $errors" -ForegroundColor Green
 }
 Write-Host ""
-Write-Host "Ahora puedes configurar Radarr para que apunte a: $destino" -ForegroundColor Yellow
-Write-Host "Los archivos originales NO se han movido ni copiado." -ForegroundColor Yellow
+Write-Host "Ahora puedes configurar Radarr para que apunte a: $destination" -ForegroundColor Yellow
+Write-Host "Radarr debería poder seguir los symlinks y acceder a los archivos." -ForegroundColor Yellow
 Write-Host ""
 
 # Pausar para ver resultados
