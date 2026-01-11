@@ -1,4 +1,5 @@
-# Script to create symlinks for movies scattered across multiple drives
+# Script to create folder symlinks for movies scattered across multiple drives
+# This version creates symlinks to entire folders (better for Radarr)
 # RUN AS ADMINISTRATOR
 
 # Check if running as administrator
@@ -12,7 +13,7 @@ if (-not $isAdmin) {
     Write-Host "1. Right-click on PowerShell" -ForegroundColor White
     Write-Host "2. Select 'Run as administrator'" -ForegroundColor White
     Write-Host "3. Navigate to the script folder: cd 'path\to\script'" -ForegroundColor White
-    Write-Host "4. Execute: .\create-symlinks.ps1" -ForegroundColor White
+    Write-Host "4. Execute: .\create-folder-symlinks.ps1" -ForegroundColor White
     Write-Host ""
     Read-Host "Press Enter to exit"
     exit
@@ -34,7 +35,7 @@ $sources = @(
     "U:\"
 )
 
-# Valid video extensions
+# Valid video extensions (to identify movie folders)
 $extensions = @("*.mkv", "*.mp4", "*.avi", "*.m4v", "*.mov")
 
 # Folder names to ignore (you can add more)
@@ -52,59 +53,50 @@ $ignoredFolders = @(
     "samples"
 )
 
-# Words in file names to ignore
-$ignoredWordsInFileName = @(
-    "sample"
-)
-
 # Debug mode (change to $true to see more details)
 $debugMode = $false
 
-# Function to check if a path should be ignored
-function ShouldIgnore {
+# Function to check if a folder should be ignored
+function ShouldIgnoreFolder {
     param (
-        [string]$filePath,
-        [string]$fileName
+        [string]$folderPath,
+        [string]$folderName
     )
     
     try {
-        # Check if the file name contains words to ignore
-        foreach ($word in $ignoredWordsInFileName) {
-            if ($fileName.ToLower() -like "*$word*") {
-                return $true
-            }
+        # Check if folder name is in ignored list
+        if ($ignoredFolders -contains $folderName.ToLower()) {
+            return $true
         }
         
-        # Get all folders in the path
-        $folders = $filePath.Split([IO.Path]::DirectorySeparatorChar)
-        
-        # Check if any folder in the path matches ignored ones
-        foreach ($folder in $folders) {
-            if ($ignoredFolders -contains $folder.ToLower()) {
-                return $true
-            }
-        }
-        
-        # Check if .ignore file exists in the file's folder or parent folders
-        $currentDirectory = Split-Path -LiteralPath $filePath -Parent
-        
-        while ($currentDirectory) {
-            $ignoreFile = Join-Path $currentDirectory ".ignore"
-            if (Test-Path -LiteralPath $ignoreFile -ErrorAction SilentlyContinue) {
-                return $true
-            }
-            
-            # Move up one level (stop if we reach the root)
-            $parentDirectory = Split-Path -LiteralPath $currentDirectory -Parent
-            if ($parentDirectory -eq $currentDirectory) {
-                break
-            }
-            $currentDirectory = $parentDirectory
+        # Check if .ignore file exists in the folder
+        $ignoreFile = Join-Path $folderPath ".ignore"
+        if (Test-Path -LiteralPath $ignoreFile -ErrorAction SilentlyContinue) {
+            return $true
         }
         
         return $false
     } catch {
-        # If there's an error checking, don't ignore the file
+        return $false
+    }
+}
+
+# Function to check if a folder contains video files
+function ContainsVideoFiles {
+    param (
+        [string]$folderPath
+    )
+    
+    try {
+        foreach ($ext in $extensions) {
+            $videoFiles = Get-ChildItem -LiteralPath $folderPath -Filter $ext -File -ErrorAction SilentlyContinue
+            if ($videoFiles) {
+                return $true
+            }
+        }
+        return $false
+    } catch {
+        # If there's an error checking, assume it doesn't contain videos
         return $false
     }
 }
@@ -116,7 +108,7 @@ if (-not (Test-Path -LiteralPath $destination)) {
 }
 
 Write-Host ""
-Write-Host "=== STARTING SYMLINK CREATION ===" -ForegroundColor Cyan
+Write-Host "=== STARTING FOLDER SYMLINK CREATION ===" -ForegroundColor Cyan
 Write-Host "Destination: $destination" -ForegroundColor Yellow
 Write-Host ""
 
@@ -134,98 +126,72 @@ foreach ($source in $sources) {
     Write-Host ""
     Write-Host "Processing: $source" -ForegroundColor Cyan
     
-    # Search for all video files recursively
-    foreach ($ext in $extensions) {
-        $files = Get-ChildItem -Path $source -Filter $ext -Recurse -File -ErrorAction SilentlyContinue
-        
-        foreach ($file in $files) {
-            try {
-                # DEBUG: Show file information
-                if ($debugMode) {
-                    Write-Host ""
-                    Write-Host "DEBUG - Processing file:" -ForegroundColor Magenta
-                    Write-Host "  Name: $($file.Name)" -ForegroundColor DarkGray
-                    Write-Host "  FullName: $($file.FullName)" -ForegroundColor DarkGray
-                    Write-Host "  Directory: $($file.DirectoryName)" -ForegroundColor DarkGray
-                }
-                
-                # Verify the file still exists
-                if (-not (Test-Path -LiteralPath $file.FullName)) {
-                    Write-Host "  File disappeared: $($file.Name)" -ForegroundColor Magenta
-                    Write-Host "    Reported path: $($file.FullName)" -ForegroundColor DarkGray
-                    $ignored++
-                    continue
-                }
-            } catch {
-                Write-Host "  Error verifying existence: $($file.Name)" -ForegroundColor Magenta
-                Write-Host "    $($_.Exception.Message)" -ForegroundColor DarkGray
+    # Get all folders that contain video files
+    $folders = Get-ChildItem -Path $source -Directory -Recurse -ErrorAction SilentlyContinue | Where-Object {
+        ContainsVideoFiles -folderPath $_.FullName
+    }
+    
+    foreach ($folder in $folders) {
+        try {
+            # DEBUG: Show folder information
+            if ($debugMode) {
+                Write-Host ""
+                Write-Host "DEBUG - Processing folder:" -ForegroundColor Magenta
+                Write-Host "  Name: $($folder.Name)" -ForegroundColor DarkGray
+                Write-Host "  FullName: $($folder.FullName)" -ForegroundColor DarkGray
+            }
+            
+            # Check if folder should be ignored
+            if (ShouldIgnoreFolder -folderPath $folder.FullName -folderName $folder.Name) {
+                Write-Host "  Ignored: $($folder.Name)" -ForegroundColor DarkYellow
                 $ignored++
                 continue
             }
             
-            # Check if should be ignored
-            if (ShouldIgnore -filePath $file.FullName -fileName $file.Name) {
-                Write-Host "  Ignored: $($file.Name)" -ForegroundColor DarkYellow
-                $ignored++
+            # Destination symlink path
+            $symlinkPath = Join-Path $destination $folder.Name
+            
+            # Check if it already exists
+            if (Test-Path -LiteralPath $symlinkPath) {
+                if ($debugMode) {
+                    Write-Host "  Already exists: $($folder.Name)" -ForegroundColor Gray
+                }
+                $alreadyExist++
                 continue
             }
             
-            try {
-                # Get file name without extension
-                $movieName = $file.BaseName
-                
-                # Create destination folder for the movie
-                $movieFolder = Join-Path $destination $movieName
-                
-                if (-not (Test-Path -LiteralPath $movieFolder)) {
-                    New-Item -ItemType Directory -Path $movieFolder -Force -ErrorAction Stop | Out-Null
-                }
-                
-                # Full path of the symlink
-                $symlinkPath = Join-Path $movieFolder $file.Name
-                
-                # Check if it already exists
-                if (Test-Path -LiteralPath $symlinkPath) {
-                    if ($debugMode) {
-                        Write-Host "  Already exists: $movieName" -ForegroundColor Gray
-                    }
-                    $alreadyExist++
-                    continue
-                }
-                
-                # DEBUG: Show what will be created
-                if ($debugMode) {
-                    Write-Host "  Attempting to create symlink:" -ForegroundColor Cyan
-                    Write-Host "    Target: $($file.FullName)" -ForegroundColor DarkGray
-                    Write-Host "    Path: $symlinkPath" -ForegroundColor DarkGray
-                }
-                
-                # Escape brackets in source path (fix for PowerShell bug)
-                $escapedTarget = $file.FullName -replace '\[','`[' -replace '\]','`]'
-                
-                # Create the symlink using -Value instead of -Target (better bracket handling)
-                New-Item -ItemType SymbolicLink -Path $symlinkPath -Value $escapedTarget -Force -ErrorAction Stop | Out-Null
-                
-                Write-Host "  Created: $movieName" -ForegroundColor Green
-                
-                $counter++
-                
-            } catch {
-                Write-Host "  Error with: $($file.Name)" -ForegroundColor Red
-                Write-Host "    Source path: $($file.FullName)" -ForegroundColor DarkRed
-                Write-Host "    Destination folder: $movieFolder" -ForegroundColor DarkRed
-                Write-Host "    Message: $($_.Exception.Message)" -ForegroundColor DarkRed
-                $errors++
+            # DEBUG: Show what will be created
+            if ($debugMode) {
+                Write-Host "  Attempting to create folder symlink:" -ForegroundColor Cyan
+                Write-Host "    Target: $($folder.FullName)" -ForegroundColor DarkGray
+                Write-Host "    Path: $symlinkPath" -ForegroundColor DarkGray
             }
+            
+            # Escape brackets in source path (fix for PowerShell bug)
+            $escapedTarget = $folder.FullName -replace '\[','`[' -replace '\]','`]'
+            
+            # Create the directory symlink
+            New-Item -ItemType SymbolicLink -Path $symlinkPath -Value $escapedTarget -Force -ErrorAction Stop | Out-Null
+            
+            Write-Host "  Created: $($folder.Name)" -ForegroundColor Green
+            
+            $counter++
+            
+        } catch {
+            Write-Host "  Error with: $($folder.Name)" -ForegroundColor Red
+            Write-Host "    Source path: $($folder.FullName)" -ForegroundColor DarkRed
+            Write-Host "    Destination path: $symlinkPath" -ForegroundColor DarkRed
+            Write-Host "    Message: $($_.Exception.Message)" -ForegroundColor DarkRed
+            $errors++
         }
     }
 }
 
 Write-Host ""
 Write-Host "=== SUMMARY ===" -ForegroundColor Cyan
-Write-Host "Symlinks created: $counter" -ForegroundColor Green
+Write-Host "Folder symlinks created: $counter" -ForegroundColor Green
 Write-Host "Already existed: $alreadyExist" -ForegroundColor Gray
-Write-Host "Files ignored: $ignored" -ForegroundColor Yellow
+Write-Host "Folders ignored: $ignored" -ForegroundColor Yellow
 if ($errors -gt 0) {
     Write-Host "Errors: $errors" -ForegroundColor Red
     Write-Host ""
@@ -236,7 +202,7 @@ if ($errors -gt 0) {
 }
 Write-Host ""
 Write-Host "You can now configure Radarr to point to: $destination" -ForegroundColor Yellow
-Write-Host "Original files have NOT been moved or copied." -ForegroundColor Yellow
+Write-Host "Radarr should now be able to follow the symlinks and access the files." -ForegroundColor Yellow
 Write-Host ""
 
 # Pause to see results
